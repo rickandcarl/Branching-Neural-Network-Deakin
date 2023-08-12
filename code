@@ -1,0 +1,81 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import matplotlib.pyplot as plt
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.utils import plot_model
+import os
+import optuna
+
+
+# 读取Excel数据，忽略第一行
+data = pd.read_csv(r'C:\Users\牛奶与啡\Desktop\师大体检数据女散点图.csv', skiprows=1)
+
+# 提取X和Y数据
+# 提取X和Y数据
+X = data.iloc[:, 5:26]  # 第11列到第28列
+Y = data.iloc[:, 30]  # 第10列
+
+
+
+# 处理缺失值
+X = X.fillna(X.mean())
+Y = Y.fillna(Y.mean())
+
+# 划分训练集和测试集
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
+
+# 定义模型构建函数
+def create_model(trial):
+    model = keras.Sequential()
+    input_layer = layers.Input(shape=(X_train.shape[1],))
+    x = layers.BatchNormalization()(input_layer)
+
+    num_branches = trial.suggest_int('num_branches', 2, 9)
+    branch_neurons = trial.suggest_int('branch_neurons', 3, 256, log=True)
+
+    branches = []
+    for _ in range(num_branches):
+        branch = layers.Dense(branch_neurons, activation='relu')(x)
+        branch = layers.BatchNormalization()(branch)
+        
+        # 添加优化 dropout 层的超参数
+        dropout_rate = trial.suggest_float('dropout_rate', 0.1, 0.7)
+        branch = layers.Dropout(dropout_rate)(branch)
+        
+        branch = layers.Dense(branch_neurons, activation='relu')(branch)
+        branches.append(branch)
+
+    merged = layers.concatenate(branches)
+
+    dense_neurons = trial.suggest_int('dense_neurons', 1, 32)
+    x = layers.Dense(dense_neurons, activation='relu')(merged)
+    output_layer = layers.Dense(1)(x)
+
+    model = keras.Model(inputs=input_layer, outputs=output_layer)
+    return model
+
+# 定义目标函数
+def objective(trial):
+    model = create_model(trial)
+    model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
+    model.fit(X_train, Y_train, epochs=300, verbose=0)
+    
+    predictions = model.predict(X_test)
+    val_loss = mean_squared_error(Y_test, predictions)
+    return val_loss
+
+if __name__ == '__main__':
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=50)
+    
+    print('Number of finished trials: ', len(study.trials))
+    print('Best trial:')
+    trial = study.best_trial
+    
+    print('Value: ', trial.value)
+    print('Params: ')
+    for key, value in trial.params.items():
+        print(f'    {key}: {value}')
