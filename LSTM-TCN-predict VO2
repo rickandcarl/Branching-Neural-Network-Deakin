@@ -1,0 +1,122 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
+from tensorflow.keras import layers
+import os
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.layers import Input, LSTM, RepeatVector, TimeDistributed, Dense
+
+# 读取数据
+data_path = r'C:\Users\牛奶与啡\Desktop\TCN气体代谢分析方法\汇总数据_1\汇总数据'
+file_extension = 'xlsx'
+
+def load_data(folder_path, file_extension):
+    data = []
+    for file_name in os.listdir(folder_path):
+        if file_name.endswith(file_extension):
+            file_path = os.path.join(folder_path, file_name)
+            df = pd.read_excel(file_path, skiprows=2)
+            data.append(df)
+    return data
+
+data = load_data(data_path, file_extension)
+
+
+# 提取自变量和因变量
+X = [df.iloc[:, [4, 6]].values for df in data]
+y = [df.iloc[:, 19].values.reshape(-1, 1) for df in data]
+
+# 使用 pad_sequences 对序列进行填充
+X = pad_sequences(X, padding='post', dtype='float32')
+y = pad_sequences(y, padding='post', dtype='float32')
+
+# 数据预处理
+scaler_X = StandardScaler()
+X = np.array([scaler_X.fit_transform(sample) for sample in X])
+scaler_y = StandardScaler()
+y = np.array([scaler_y.fit_transform(sample) for sample in y])
+
+
+# 划分训练集和测试集
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 打印数据形状
+print("X_train shape:", X_train.shape)
+print("y_train shape:", y_train.shape)
+print("X_test shape:", X_test.shape)
+print("y_test shape:", y_test.shape)
+
+def build_seq2seq_model(input_shape, output_sequence_length):
+    model = tf.keras.Sequential([
+        layers.Input(shape=input_shape),
+        layers.LSTM(64, return_sequences=False),  # Encoder部分
+        layers.RepeatVector(output_sequence_length),
+        layers.LSTM(64, return_sequences=True),  # Decoder部分
+        layers.TimeDistributed(layers.Dense(1, activation='linear'))  # 输出层
+    ])
+    return model
+
+# 假设输出序列的长度为 y_train.shape[1]
+output_sequence_length = y_train.shape[1]
+
+# 编译模型
+input_shape = X_train.shape[1:]
+print("Input shape:", input_shape)
+
+model = build_seq2seq_model(input_shape, output_sequence_length)
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# 训练模型
+model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2)
+
+# 评估模型
+loss = model.evaluate(X_test, y_test)
+print(f'Test Loss: {loss}')
+
+
+
+
+import matplotlib.pyplot as plt
+
+# 预测序列
+y_pred = model.predict(X_test)
+
+
+
+
+
+
+# 反向转换标准化
+y_test_inv = scaler_y.inverse_transform(y_test.reshape(-1, 1)).reshape(y_test.shape)
+y_pred_inv = scaler_y.inverse_transform(y_pred.reshape(-1, 1)).reshape(y_pred.shape)
+
+
+
+print(y_pred_inv)
+
+# 绘制时序图
+plt.figure(figsize=(12, 6))
+sample_index = 4  # 选择样本的索引
+plt.plot(y_test_inv[sample_index], label='Actual')
+plt.plot(y_pred_inv[sample_index], label='Predicted')
+plt.legend()
+plt.xlabel('Time Steps')
+plt.ylabel('Value')
+plt.title('Actual vs Predicted Time Series')
+plt.show()
+
+# 绘制所有样本的时序图
+plt.figure(figsize=(12, 6))
+for sample_index in range(len(y_test_inv)):
+    plt.plot(y_test_inv[sample_index], label=f'Actual Sample {sample_index}')
+    plt.plot(y_pred_inv[sample_index], label=f'Predicted Sample {sample_index}', linestyle='dashed')
+
+plt.legend()
+plt.xlabel('Time Steps')
+plt.ylabel('Value')
+plt.title('Actual vs Predicted Time Series for All Samples')
+plt.show()
+
+
