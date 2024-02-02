@@ -1,0 +1,78 @@
+# Split the data into train and test sets (you can customize this based on your dataset)
+split_idx = int(0.7 * X.shape[0])  # 80% for training, 20% for testing
+X_train, X_test = X[:split_idx], X[split_idx:]
+y_train, y_test = y[:split_idx], y[split_idx:]
+
+def create_tcn_model(num_tcn_blocks, num_tcn_filters, num_tcn_kernel_size, dilation_rate, dropout_rate, dense_units, learning_rate):
+    model = Sequential()
+
+    model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2])))
+    model.add(MaxPooling1D(pool_size=2))
+
+    x = model.layers[-1].output
+
+    for i in range(num_tcn_blocks):
+        x_tcn = Conv1D(filters=num_tcn_filters, kernel_size=num_tcn_kernel_size, padding='causal', dilation_rate=dilation_rate)(x)
+        x_tcn = LayerNormalization()(x_tcn)
+        x_tcn = Dropout(dropout_rate)(x_tcn)
+
+        x_tcn = Conv1D(filters=num_tcn_filters, kernel_size=num_tcn_kernel_size, padding='causal', dilation_rate=dilation_rate)(x_tcn)
+        x_tcn = LayerNormalization()(x_tcn)
+        x_tcn = ReLU()(x_tcn)
+        x_tcn = Dropout(dropout_rate)(x_tcn)
+
+        x = tf.keras.layers.concatenate([x_tcn, x], axis=-1)
+
+    model.add(Flatten())
+    model.add(Dense(dense_units, activation='relu'))
+    model.add(Dropout(dropout_rate))
+    model.add(Dense(1))
+
+
+    optimizer = SGD(learning_rate=learning_rate, momentum= 0.92)  # 使用SGD+m优化器
+    model.compile(optimizer=optimizer, loss='mean_squared_error')
+
+    return model
+
+# Using the best hyperparameters from the optimization
+best_params = {
+    'num_tcn_blocks': 8,
+    'num_tcn_filters': 84,
+    'num_tcn_kernel_size': 28,
+    'dilation_rate': 6,
+    'dropout_rate': 0.44271814423912603,
+    'dense_units': 64,
+    'learning_rate': 0.0000002418997086511722
+}
+
+# 创建和编译使用最佳超参数的模型
+best_model = create_tcn_model(**best_params)
+
+# 打印模型摘要
+best_model.summary()
+
+# 训练模型并保存最佳权重
+batch_size = 32
+
+# 创建 ModelCheckpoint 回调，用于保存验证损失最小时的模型权重
+checkpoint = ModelCheckpoint('best_model_weights.h5', monitor='val_loss', save_best_only=True, save_weights_only=True, mode='min')
+
+# 训练模型，包括 ModelCheckpoint 回调
+history = best_model.fit(X_train, y_train, epochs=1000, batch_size=batch_size, validation_data=(X_test, y_test), callbacks=[checkpoint], verbose=1)
+
+# 加载保存的最佳模型权重
+best_model_loaded = create_tcn_model(**best_params)  # 使用之前的超参数创建模型
+best_model_loaded.load_weights('best_model_weights.h5')  # 加载最佳权重
+
+# 打印加载的最佳模型的验证损失
+val_loss_loaded = best_model_loaded.evaluate(X_test, y_test)
+print("Loaded best model's validation loss:", val_loss_loaded)
+
+# 使用加载的模型进行测试集上的预测
+y_pred = best_model_loaded.predict(X_test)
+
+# 计算 R2 分数
+r2 = r2_score(y_test, y_pred)
+
+# 打印 R2 分数
+print("R2 score on test set:", r2)
